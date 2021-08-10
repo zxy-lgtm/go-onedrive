@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -230,6 +231,45 @@ func (c *Client) Do(ctx context.Context, req *http.Request, isUsingPlainHttpClie
 	}
 
 	return err
+}
+
+func (c *Client) Download(ctx context.Context, req *http.Request, isUsingPlainHttpClient bool, target interface{}) (rp io.ReadCloser, err error) {
+	if ctx == nil {
+		return rp, errors.New("context must be non-nil")
+	}
+	req = req.WithContext(ctx)
+
+	var resp *http.Response
+
+	if isUsingPlainHttpClient {
+		httpClient := &http.Client{}
+		resp, err = httpClient.Do(req)
+	} else {
+		resp, err = c.client.Do(req)
+	}
+
+	if err != nil {
+		// If we got an error, and the context has been canceled, the error from the context is probably more useful.
+		select {
+		case <-ctx.Done():
+			return rp, ctx.Err()
+		default:
+		}
+
+		// If the error type is *url.Error, sanitize its URL before returning.
+		if e, ok := err.(*url.Error); ok {
+			if url, err := url.Parse(e.URL); err == nil {
+				e.URL = sanitizeURL(url).String()
+				return rp, e
+			}
+		}
+
+		return rp, err
+	}
+
+	defer resp.Body.Close()
+
+	return resp.Body, err
 }
 
 // sanitizeURL redacts the client_secret parameter from the URL which may be exposed to the user.
